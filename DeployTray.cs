@@ -31,22 +31,26 @@ public sealed class DeployTray : ApplicationContext
     readonly string configPath;
     readonly Dictionary<string, Indicator> icons = new Dictionary<string, Indicator>();
     readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
+    readonly System.Windows.Forms.Timer activationTimer = new System.Windows.Forms.Timer();
+    readonly EventWaitHandle activation;
     readonly Control dispatcher = new Control();
     readonly NotifyIcon control = new NotifyIcon();
     Config config;
     Icon controlIcon;
-    bool busy, closing;
+    bool busy, closing, settingsOpen;
     int generation;
     [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr handle);
 
     public static void Run(string folder) {
+        using (var activation = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\DeployTray-gh-activate"))
         using (var mutex = new Mutex(false, "Local\\DeployTray-gh")) {
-            if (!mutex.WaitOne(0)) return;
-            try { Application.EnableVisualStyles(); Application.Run(new DeployTray(folder)); }
+            if (!mutex.WaitOne(0)) { activation.Set(); return; }
+            try { Application.EnableVisualStyles(); Application.Run(new DeployTray(folder, activation)); }
             finally { mutex.ReleaseMutex(); }
         }
     }
-    DeployTray(string folder) {
+    DeployTray(string folder, EventWaitHandle activation) {
+        this.activation = activation;
         configPath = Path.Combine(folder, "config.json");
         var handle = dispatcher.Handle;
         config = File.Exists(configPath) ? new JavaScriptSerializer().Deserialize<Config>(File.ReadAllText(configPath)) : new Config();
@@ -61,12 +65,20 @@ public sealed class DeployTray : ApplicationContext
         control.ContextMenuStrip = menu;
         timer.Interval = 15000;
         timer.Tick += delegate { Poll(); };
-        if (String.IsNullOrWhiteSpace(config.Repositories)) Settings();
+        activationTimer.Interval = 500;
+        activationTimer.Tick += delegate { if (this.activation.WaitOne(0)) Settings(); };
+        activationTimer.Start();
+        Settings();
         timer.Start();
         Poll();
     }
     void Settings() {
+        if (settingsOpen || closing) return;
+        settingsOpen = true;
+        try {
         using (var form = new Form { Text = "DeployTray settings", Width = 490, Height = 320, StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false }) {
+            form.TopMost = true;
+            form.Shown += delegate { form.Activate(); };
             form.Controls.Add(new Label { Text = "Repositories: owner/repo, one per line", Left = 15, Top = 15, Width = 445 });
             var repos = new TextBox { Left = 15, Top = 40, Width = 445, Height = 110, Multiline = true, ScrollBars = ScrollBars.Vertical, Text = config.Repositories };
             form.Controls.Add(repos);
@@ -91,6 +103,7 @@ public sealed class DeployTray : ApplicationContext
             form.AcceptButton = save;
             form.ShowDialog();
         }
+        } finally { settingsOpen = false; }
         Poll();
     }
     static string[] SplitRepos(string value) { return (value ?? "").Split(new char[] { '\r', '\n', ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries); }
@@ -206,6 +219,7 @@ public sealed class DeployTray : ApplicationContext
     protected override void ExitThreadCore() {
         closing = true;
         timer.Stop(); timer.Dispose();
+        activationTimer.Stop(); activationTimer.Dispose();
         foreach (var icon in icons.Values) icon.Dispose();
         control.Visible = false; control.Dispose();
         if (controlIcon != null) controlIcon.Dispose();
