@@ -201,10 +201,22 @@ public sealed class DeployTray : ApplicationContext
     }
     static Icon MakeIcon(string text) { return MakeIcon(text, Color.FromArgb(245, 171, 35)); }
     static Icon MakeIcon(string text, Color color) {
-        using (var bitmap = new Bitmap(32, 32)) using (var graphics = Graphics.FromImage(bitmap)) using (var font = new Font("Segoe UI", 10, FontStyle.Bold, GraphicsUnit.Pixel)) {
+        using (var bitmap = new Bitmap(32, 32)) using (var graphics = Graphics.FromImage(bitmap)) {
             graphics.Clear(color);
-            graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-            using (var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center }) graphics.DrawString(text, font, Brushes.Black, new RectangleF(0, 0, 32, 32), format);
+            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            using (var family = new FontFamily("Segoe UI"))
+            using (var glyphs = new System.Drawing.Drawing2D.GraphicsPath()) {
+                glyphs.AddString(text, family, (int)FontStyle.Bold, 32, PointF.Empty, StringFormat.GenericTypographic);
+                var bounds = glyphs.GetBounds();
+                if (bounds.Width > 0 && bounds.Height > 0) {
+                    // Fit the visible glyphs, excluding font padding, to the entire icon.
+                    float scaleX = 30 / bounds.Width, scaleY = 28 / bounds.Height;
+                    using (var transform = new System.Drawing.Drawing2D.Matrix(scaleX, 0, 0, scaleY, 1 - bounds.X * scaleX, 2 - bounds.Y * scaleY)) {
+                        glyphs.Transform(transform);
+                    }
+                    graphics.FillPath(Brushes.Black, glyphs);
+                }
+            }
             var handle = bitmap.GetHicon();
             try { using (var borrowed = Icon.FromHandle(handle)) return (Icon)borrowed.Clone(); }
             finally { DestroyIcon(handle); }
