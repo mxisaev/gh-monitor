@@ -202,7 +202,7 @@ public sealed class DeployTray : ApplicationContext
     static Icon MakeIcon(string text) { return MakeIcon(text, Color.FromArgb(245, 171, 35)); }
     static Icon MakeIcon(string text, Color color) {
         using (var bitmap = new Bitmap(32, 32)) using (var graphics = Graphics.FromImage(bitmap)) {
-            graphics.Clear(color);
+            graphics.Clear(Color.Transparent);
             graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             using (var family = new FontFamily("Segoe UI"))
             using (var glyphs = new System.Drawing.Drawing2D.GraphicsPath()) {
@@ -214,7 +214,9 @@ public sealed class DeployTray : ApplicationContext
                     using (var transform = new System.Drawing.Drawing2D.Matrix(scaleX, 0, 0, scaleY, 1 - bounds.X * scaleX, 2 - bounds.Y * scaleY)) {
                         glyphs.Transform(transform);
                     }
-                    graphics.FillPath(Brushes.Black, glyphs);
+                    // Keep the idle icon transparent; preserve status colors in the letters.
+                    bool idle = color.R == 160 && color.G == 170 && color.B == 185;
+                    using (var brush = new SolidBrush(idle ? Color.Black : color)) graphics.FillPath(brush, glyphs);
                 }
             }
             var handle = bitmap.GetHicon();
