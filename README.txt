@@ -8,8 +8,8 @@
 3. Распакуй архив в постоянную папку, например C:\Tools\DeployTray.
 4. Дважды нажми Start.vbs (запуск без консольного окна).
 5. В настройках впиши реальные репозитории owner/repo, каждый с новой строки.
-   Workflow name contains: deploy — только workflow с deploy в имени.
-   Оставь поле пустым, чтобы видеть все активные workflow.
+   Workflow name contains: пустое поле — все активные workflow (по умолчанию).
+   Если вписать deploy, будут показаны только workflow с deploy в имени.
    Нажми Save.
 
 Работа

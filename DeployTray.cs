@@ -14,7 +14,7 @@ public sealed class DeployTray : ApplicationContext
 {
     public sealed class Config {
         public string Repositories = "";
-        public string WorkflowContains = "deploy";
+        public string WorkflowContains = "";
         public int IntervalSeconds = 15;
     }
     public sealed class RunInfo {
@@ -80,9 +80,9 @@ public sealed class DeployTray : ApplicationContext
         activationTimer.Interval = 500;
         activationTimer.Tick += delegate { if (this.activation.WaitOne(0)) Settings(); };
         activationTimer.Start();
-        Settings();
         timer.Start();
         Poll();
+        dispatcher.BeginInvoke((Action)delegate { Settings(); });
     }
     void Settings() {
         if (settingsOpen || closing) return;
