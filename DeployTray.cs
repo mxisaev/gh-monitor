@@ -26,6 +26,18 @@ public sealed class DeployTray : ApplicationContext
     sealed class Indicator : IDisposable {
         public NotifyIcon Tray;
         public Icon Icon;
+        public string Label;
+        public Color Color;
+        public void Update(string label, Color color) {
+            if (Label == label && Color == color) return;
+            var next = MakeIcon(label, color);
+            Tray.Icon = next;
+            var previous = Icon;
+            Icon = next;
+            Label = label;
+            Color = color;
+            if (previous != null) previous.Dispose();
+        }
         public void Dispose() { Tray.Visible = false; Tray.Dispose(); Icon.Dispose(); }
     }
     readonly string configPath;
@@ -167,8 +179,7 @@ public sealed class DeployTray : ApplicationContext
                         var run = pair.Value;
                         Indicator indicator;
                         if (!icons.TryGetValue(pair.Key, out indicator)) {
-                            var icon = MakeIcon(Letters(RunTitle(run)));
-                            var tray = new NotifyIcon { Icon = icon, Visible = true };
+                            var tray = new NotifyIcon();
                             var context = new ContextMenuStrip();
                             var url = run.html_url;
                             context.Items.Add("Open workflow", null, delegate { OpenUrl(url); });
@@ -176,10 +187,13 @@ public sealed class DeployTray : ApplicationContext
                             context.Items.Add("Exit", null, delegate { ExitThread(); });
                             tray.ContextMenuStrip = context;
                             tray.DoubleClick += delegate { OpenUrl(url); };
-                            indicator = new Indicator { Tray = tray, Icon = icon };
+                            indicator = new Indicator { Tray = tray };
+                            indicator.Update(Letters(RunTitle(run)), RunColor(run.status));
+                            tray.Visible = true;
                             icons.Add(pair.Key, indicator);
                         }
-                        indicator.Tray.Text = Short(RunTitle(run) + " | " + run.repo + " | " + run.status + " | " + run.head_branch, 63);
+                        indicator.Update(Letters(RunTitle(run)), RunColor(run.status));
+                        indicator.Tray.Text = Short(run.status + " | " + RunTitle(run) + " | " + run.repo + " | " + run.head_branch, 63);
                     }
                 }); } catch (InvalidOperationException) { }
             }
@@ -199,7 +213,9 @@ public sealed class DeployTray : ApplicationContext
         if (controlIcon != null) controlIcon.Dispose();
         controlIcon = next;
     }
-    static Icon MakeIcon(string text) { return MakeIcon(text, Color.FromArgb(245, 171, 35)); }
+    static Color RunColor(string status) {
+        return status == "in_progress" ? Color.FromArgb(245, 171, 35) : Color.FromArgb(128, 128, 128);
+    }
     static Icon MakeIcon(string text, Color color) {
         using (var bitmap = new Bitmap(32, 32)) using (var graphics = Graphics.FromImage(bitmap)) {
             graphics.Clear(Color.Transparent);
