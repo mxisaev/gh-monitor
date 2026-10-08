@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -18,7 +19,7 @@ public sealed class DeployTray : ApplicationContext
         public int IntervalSeconds = 15;
     }
     public sealed class RunInfo {
-        public string name, display_title, html_url, status, head_branch;
+        public string name, display_title, html_url, status, head_branch, conclusion, updated_at;
         public long id;
         public string repo;
     }
@@ -51,6 +52,9 @@ public sealed class DeployTray : ApplicationContext
     Icon controlIcon;
     bool busy, closing, settingsOpen;
     int generation;
+    DateTime successUntilUtc = DateTime.MinValue;
+    bool connectionError;
+    int activeRunCount;
     [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr handle);
 
     public static void Run(string folder) {
@@ -78,7 +82,13 @@ public sealed class DeployTray : ApplicationContext
         timer.Interval = 15000;
         timer.Tick += delegate { Poll(); };
         activationTimer.Interval = 500;
-        activationTimer.Tick += delegate { if (this.activation.WaitOne(0)) Settings(); };
+        activationTimer.Tick += delegate {
+            if (successUntilUtc != DateTime.MinValue && DateTime.UtcNow >= successUntilUtc) {
+                successUntilUtc = DateTime.MinValue;
+                if (!connectionError) UpdateControl();
+            }
+            if (this.activation.WaitOne(0)) Settings();
+        };
         activationTimer.Start();
         timer.Start();
         Poll();
@@ -107,6 +117,7 @@ public sealed class DeployTray : ApplicationContext
                 catch (Exception e) { MessageBox.Show("Cannot save settings: " + e.Message); return; }
                 config = next;
                 generation++;
+                successUntilUtc = DateTime.MinValue;
                 foreach (var indicator in icons.Values) indicator.Dispose();
                 icons.Clear();
                 form.Close();
@@ -139,8 +150,10 @@ public sealed class DeployTray : ApplicationContext
         var repositories = SplitRepos(snapshot.Repositories);
         if (repositories.Length == 0) { control.Text = "DeployTray: configure repositories"; control.Visible = true; return; }
         busy = true;
+        var trackedRuns = new List<string>(icons.Keys);
         Task.Run(delegate {
             var runs = new Dictionary<string, RunInfo>();
+            var successfulRuns = new List<RunInfo>();
             string error = null;
             try {
                 var json = new JavaScriptSerializer { MaxJsonLength = Int32.MaxValue };
@@ -154,6 +167,19 @@ public sealed class DeployTray : ApplicationContext
                             runs[repo + ":" + run.id] = run;
                         }
                     }
+                    // Include short runs that finished between polls, even after a restart.
+                    var recent = json.Deserialize<Page>(Gh("api --hostname github.com --method GET \"repos/" + repo + "/actions/runs?status=success&per_page=100\""));
+                    foreach (var run in recent.workflow_runs ?? new RunInfo[0]) {
+                        if ((run.name ?? "").IndexOf(snapshot.WorkflowContains ?? "", StringComparison.OrdinalIgnoreCase) >= 0)
+                            successfulRuns.Add(run);
+                    }
+                    // Long-running workflows can fall outside the recent page.
+                    foreach (var key in trackedRuns) {
+                        if (!key.StartsWith(repo + ":", StringComparison.Ordinal) || runs.ContainsKey(key)) continue;
+                        var runId = key.Substring(repo.Length + 1);
+                        var finished = json.Deserialize<RunInfo>(Gh("api --hostname github.com --method GET \"repos/" + repo + "/actions/runs/" + runId + "\""));
+                        successfulRuns.Add(finished);
+                    }
                 }
             } catch (Exception e) { error = e is System.ComponentModel.Win32Exception ? "Install GitHub CLI, then run gh auth login" : e.Message; }
             if (!closing) {
@@ -162,6 +188,7 @@ public sealed class DeployTray : ApplicationContext
                     if (closing) return;
                     if (version != generation) { Poll(); return; }
                     if (error != null) {
+                        connectionError = true;
                         SetControl("GH", Color.FromArgb(225, 75, 75));
                         control.Text = Short("DeployTray: " + error, 63);
                         control.Visible = true;
@@ -169,8 +196,10 @@ public sealed class DeployTray : ApplicationContext
                         foreach (var entry in icons.Values) entry.Tray.Text = Short("UNKNOWN: connection lost; last known active", 63);
                         return;
                     }
-                    SetControl("GH", Color.FromArgb(160, 170, 185));
-                    control.Text = runs.Count == 0 ? "DeployTray: running, no active workflows" : "DeployTray: active workflows: " + runs.Count;
+                    connectionError = false;
+                    successUntilUtc = SuccessDeadline(successfulRuns, DateTime.UtcNow, successUntilUtc);
+                    activeRunCount = runs.Count;
+                    UpdateControl();
                     control.Visible = true;
                     var obsolete = new List<string>();
                     foreach (var key in icons.Keys) if (!runs.ContainsKey(key)) obsolete.Add(key);
@@ -200,6 +229,24 @@ public sealed class DeployTray : ApplicationContext
         });
     }
     static string Short(string value, int length) { return value.Length <= length ? value : value.Substring(0, length - 1) + "…"; }
+    static DateTime SuccessDeadline(IEnumerable<RunInfo> runs, DateTime now, DateTime previous) {
+        var deadline = previous > now ? previous : DateTime.MinValue;
+        foreach (var run in runs) {
+            DateTime completed;
+            if (run.status != "completed" || run.conclusion != "success" ||
+                !DateTime.TryParse(run.updated_at, CultureInfo.InvariantCulture,
+                    DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out completed) || completed > now) continue;
+            var expires = completed.AddMinutes(5);
+            if (expires > now && expires > deadline) deadline = expires;
+        }
+        return deadline;
+    }
+    void UpdateControl() {
+        bool success = DateTime.UtcNow < successUntilUtc;
+        SetControl("GH", success ? Color.FromArgb(35, 160, 65) : Color.FromArgb(160, 170, 185));
+        control.Text = success ? "DeployTray: successful workflow within the last 5 minutes" :
+            activeRunCount == 0 ? "DeployTray: running, no active workflows" : "DeployTray: active workflows: " + activeRunCount;
+    }
     public static string RunTitle(RunInfo run) {
         return String.IsNullOrWhiteSpace(run.display_title) ? run.name : run.display_title;
     }
