@@ -4,8 +4,6 @@
 
 GH Monitor is a small Windows 10/11 system-tray utility that shows your running GitHub Actions workflows at a glance. It's especially handy when you trigger builds or deployments and move on to something else: a quick look at the taskbar tells you what's happening.
 
-![GH Monitor in the Windows system tray](docs/screenshot.png)
-
 ## What it does
 
 - **One icon per active run.** Each queued or running workflow gets its own tray icon, labeled with the first three letters of its run title.
